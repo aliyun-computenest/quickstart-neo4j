@@ -14,7 +14,7 @@ Neo4j社区版在计算巢上的费用主要涉及：
 - 包年包月
 
 预估费用在创建实例时可实时看到。
-## 
+
 ## 部署架构
 Neo4j采用单机部署的架构。
 
@@ -34,7 +34,7 @@ Neo4j服务需要对ECS、VPC等资源进行访问和创建操作，若您使用
 ### 部署步骤
 单击[部署链接](https://computenest.console.aliyun.com/user/cn-hangzhou/serviceInstanceCreate?ServiceId=service-fe1bbe81bdac493eb99b)，进入服务实例部署界面，根据界面提示，填写参数完成部署。
 
-### 
+
 ### 部署参数说明
 您在创建服务实例的过程中，需要配置服务实例信息。下文介绍Neo4j社区版服务实例输入参数的详细信息。
 
@@ -55,7 +55,7 @@ Neo4j服务需要对ECS、VPC等资源进行访问和创建操作，若您使用
 
 ![1.jpg](1.jpg)
 
-### 
+ 
 ### 验证结果
 
 1. 查看服务实例。
