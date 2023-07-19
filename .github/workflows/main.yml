@@ -12,8 +12,5 @@ jobs:
         with:
           python-version: 3.x
       - run: pip install mkdocs
-<<<<<<< HEAD
-=======
       - run: pip install mkdocs-aliyun-computenest
->>>>>>> 21a88bb4d8b4e69c9eda628c5130c5eaa8f26454
       - run: mkdocs gh-deploy --force --clean --verbose
