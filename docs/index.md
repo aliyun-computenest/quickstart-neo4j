@@ -68,6 +68,9 @@ Neo4j服务需要对ECS、VPC等资源进行访问和创建操作，若您使用
 ![3.jpg](3.jpg)
 进入到对应的服务实例后，可以在页面上获取到PublicEndpoint、PrivateEndpoint和InstallPath。
 
+***注意:***
+
+    ECS安全组默认开放 7474 端口，如果您要通过公网从浏览器连接数据库，需要您主动打开安全组 7687 端口。
 
 ### 使用Neo4j
 请访问Neo4j官网了解如何使用Neo4j：[Neo4j使用文档](https://neo4j.com/docs/)
