@@ -1,0 +1,12 @@
+caseId: stc-0a50221214bf4f7c8870
+parameters:
+  AllocatePublicIp: false
+  AutoCreateSecurityGroup: true
+  DataDiskSize: 40
+  EcsInstanceType: $[iacer-auto]
+  InstancePassword: $[iacer-auto]
+  InternetChargeType: PayByTraffic
+  InternetMaxBandwidthOut: 0
+  PayType: PostPaid
+  SystemDiskSize: 40
+templateName: 单机版

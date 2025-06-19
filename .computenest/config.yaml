@@ -1,0 +1,73 @@
+Service:
+  RegionId: cn-hangzhou
+  DeployType: ros
+  DeployMetadata:
+    ServiceInstanceNameRule:
+      Prefix: neo4j
+    SupplierDeployMetadata:
+      ArtifactRelation:
+        'centos_7_9_x64_20G_alibase_20240403.vhd':
+          ArtifactId: ${Artifact.EcsImage.ArtifactId}
+          ArtifactVersion: ${Artifact.EcsImage.ArtifactVersion}
+    TemplateConfigs:
+      - Name: 单机版
+        Url: 'ros_templates/template.yaml'
+  ServiceType: private
+  ServiceInfo:
+    Locale: zh-CN
+    ShortDescription: neo4j deploy
+    Image: 'resources/icons/service_logo.jpeg'
+Artifact:
+  EcsImage:
+    ArtifactType: EcsImage
+    ArtifactName: Neo4j_ECS_Image_1
+    Description: neo4j
+    ArtifactProperty:
+      RegionId: ${ImageBuilder.EcsImage.RegionId}
+      ImageId: ${ImageBuilder.EcsImage.SourceImageId}
+ImageBuilder:
+  EcsImage:
+    RegionId: ap-southeast-1
+    SourceImageId: aliyun_3_x64_20G_alibase_20240819.vhd
+    SystemDiskSize: 40
+    InstanceType: ecs.c6.large
+    InternetMaxBandwidthOut: 100
+    CommandType: RunShellScript
+    Timeout: 10800
+    Tags: [ ]
+    CommandContent: |-
+      
+      # 安装docker-ce
+      yum-config-manager --add-repo http://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
+      yum makecache
+      yum install -y curl git docker-ce
+      sudo systemctl enable --now docker.socket
+      sudo systemctl enable --now docker.service
+      
+      mkdir -p /usr/local/applications/ && cd /usr/local/applications/
+      touch neo4j_auth.txt
+      cat << EOF >> ./docker-compose.yml
+      services:
+        neo4j:
+          image: neo4j:latest
+          volumes:
+            - /$HOME/neo4j/logs:/logs
+            - /$HOME/neo4j/config:/config
+            - /$HOME/neo4j/data:/data
+            - /$HOME/neo4j/plugin:/plugins
+          environment:
+            - NEO4J_AUTH_FILE=/run/secrets/neo4j_auth_file
+          ports:
+            - "7474:7474"
+            - "7687:7687"
+          restart: always
+          secrets:
+            - neo4j_auth_file
+      secrets:
+        neo4j_auth_file:
+          file: ./neo4j_auth.txt
+      EOF
+
+      docker compose up -d
+
+
