@@ -6,17 +6,20 @@ Service:
       Prefix: neo4j
     SupplierDeployMetadata:
       ArtifactRelation:
-        'centos_7_9_x64_20G_alibase_20240403.vhd':
+        centos_7_9_x64_20G_alibase_20240403.vhd:
           ArtifactId: ${Artifact.EcsImage.ArtifactId}
           ArtifactVersion: ${Artifact.EcsImage.ArtifactVersion}
     TemplateConfigs:
-      - Name: 单机版
-        Url: 'ros_templates/template.yaml'
+    - Name: 单机版
+      Url: ros_templates/template.yaml
   ServiceType: private
   ServiceInfo:
     Locale: zh-CN
     ShortDescription: neo4j deploy
-    Image: 'resources/icons/service_logo.jpeg'
+    Image: resources/icons/service_logo.jpeg
+    Softwares:
+    - Name: neo4j
+      Version: vbrowser-0.1.24
 Artifact:
   EcsImage:
     ArtifactType: EcsImage
@@ -34,40 +37,14 @@ ImageBuilder:
     InternetMaxBandwidthOut: 100
     CommandType: RunShellScript
     Timeout: 10800
-    Tags: [ ]
-    CommandContent: |-
-      
-      # 安装docker-ce
-      yum-config-manager --add-repo http://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
-      yum makecache
-      yum install -y curl git docker-ce
-      sudo systemctl enable --now docker.socket
-      sudo systemctl enable --now docker.service
-      
-      mkdir -p /usr/local/applications/ && cd /usr/local/applications/
-      touch neo4j_auth.txt
-      cat << EOF >> ./docker-compose.yml
-      services:
-        neo4j:
-          image: neo4j:latest
-          volumes:
-            - /$HOME/neo4j/logs:/logs
-            - /$HOME/neo4j/config:/config
-            - /$HOME/neo4j/data:/data
-            - /$HOME/neo4j/plugin:/plugins
-          environment:
-            - NEO4J_AUTH_FILE=/run/secrets/neo4j_auth_file
-          ports:
-            - "7474:7474"
-            - "7687:7687"
-          restart: always
-          secrets:
-            - neo4j_auth_file
-      secrets:
-        neo4j_auth_file:
-          file: ./neo4j_auth.txt
-      EOF
-
-      docker compose up -d
-
-
+    Tags: []
+    CommandContent: "\n# 安装docker-ce\nyum-config-manager --add-repo http://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo\n\
+      yum makecache\nyum install -y curl git docker-ce\nsudo systemctl enable --now\
+      \ docker.socket\nsudo systemctl enable --now docker.service\n\nmkdir -p /usr/local/applications/\
+      \ && cd /usr/local/applications/\ntouch neo4j_auth.txt\ncat << EOF >> ./docker-compose.yml\n\
+      services:\n  neo4j:\n    image: neo4j:latest\n    volumes:\n      - /$HOME/neo4j/logs:/logs\n\
+      \      - /$HOME/neo4j/config:/config\n      - /$HOME/neo4j/data:/data\n    \
+      \  - /$HOME/neo4j/plugin:/plugins\n    environment:\n      - NEO4J_AUTH_FILE=/run/secrets/neo4j_auth_file\n\
+      \    ports:\n      - \"7474:7474\"\n      - \"7687:7687\"\n    restart: always\n\
+      \    secrets:\n      - neo4j_auth_file\nsecrets:\n  neo4j_auth_file:\n    file:\
+      \ ./neo4j_auth.txt\nEOF\n\ndocker compose up -d"
