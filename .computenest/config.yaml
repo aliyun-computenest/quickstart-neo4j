@@ -12,6 +12,9 @@ Service:
     TemplateConfigs:
     - Name: 单机版
       Url: ros_templates/template.yaml
+      OutputConfigs:
+        - OutputKey: PrivateEndpoint
+          EnableWebProxy: true
   ServiceType: private
   ServiceInfo:
     - Locale: zh-CN
