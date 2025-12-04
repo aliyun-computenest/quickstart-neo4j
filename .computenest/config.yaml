@@ -15,8 +15,9 @@ Service:
   ServiceType: private
   ServiceInfo:
     Locale: zh-CN
-    ShortDescription: neo4j deploy
+    ShortDescription: neo4j是一个高性能的,NOSQL图形数据库，它将结构化数据存储在网络上而不是表中。它是一个嵌入式的、基于磁盘的、具备完全的事务特性的Java持久化引擎，但是它将结构化数据存储在网络(从数学角度叫做图)上而不是表中。
     Image: resources/icons/service_logo.jpeg
+    Name: neo4j社区版
     Softwares:
     - Name: neo4j
       Version: vbrowser-0.1.24
