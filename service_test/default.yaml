@@ -5,6 +5,7 @@ parameters:
   DataDiskSize: 40
   EcsInstanceType: $[iacer-auto]
   InstancePassword: $[iacer-auto]
+  Neo4jPassword: 'Neo4j$fH6!2026'
   InternetChargeType: PayByTraffic
   InternetMaxBandwidthOut: 0
   PayType: PostPaid

@@ -4,6 +4,10 @@ Conditions:
     Fn::Equals:
       - NewVPC
       - Ref: VpcOption
+  IfAllocatePublicIP:
+    Fn::Equals:
+      - true
+      - Ref: AllocatePublicIP
 Parameters:
   VpcOption:
     Type: String
@@ -209,19 +213,27 @@ Parameters:
     Default: 40
     Type: Number
     Description:
-      zh-cn: 数据盘大小, 取值范围：[40, 500], 单位：GB。
-      en: 'System disk size of each node, range of values: 40-500, units: GB.'
+      zh-cn: 数据盘大小, 取值范围：[40, 500], 单位：GB。Neo4j数据将自动写入该磁盘。
+      en: 'Data disk size, range of values: 40-500 GB. Neo4j data is stored on this disk automatically.'
     MinValue: 40
     MaxValue: 500
     Label:
       zh-cn: 数据盘空间
       en: Data Disk Space
-  Neo4jUserName:
-    Type: String
+  AllocatePublicIP:
+    Type: Boolean
     Label:
-      zh-cn: Neo4j服务用户名
-      en: Neo4j server username
-    Default: neo4j
+      en: Allocate Public IP
+      zh-cn: 是否分配公网IP
+    Default: true
+    AssociationPropertyMetadata:
+      ValueLabelMapping:
+        true:
+          zh-cn: 是
+          en: 'Yes'
+        false:
+          zh-cn: 否
+          en: 'No'
   Neo4jPassword:
     NoEcho: true
     Type: String
@@ -318,9 +330,18 @@ Resources:
         - Category: cloud_essd
           Size:
             Ref: DataDiskSize
-      InternetMaxBandwidthOut: 5
+      InternetMaxBandwidthOut:
+        Fn::If:
+          - IfAllocatePublicIP
+          - 5
+          - 0
       IoOptimized: optimized
       MaxAmount: 1
+      AllocatePublicIP:
+        Fn::If:
+          - IfAllocatePublicIP
+          - true
+          - false
   RunInstallCommand:
     Type: ALIYUN::ECS::RunCommand
     Properties:
@@ -335,17 +356,105 @@ Resources:
         Fn::Sub:
           - |-
             #!/bin/bash
+            set -Eeuo pipefail
             cd /usr/local/applications/
-            docker compose down
-            cat << EOF >> ./neo4j_auth.txt
-            ${Neo4jUserName}/${Neo4jPassword}
+            docker compose down || true
+
+            # 识别系统盘之外的数据盘，兼容 virtio 和 NVMe 设备名。
+            DATA_DIR=/data
+            ROOT_SOURCE=$(findmnt -n -o SOURCE /)
+            ROOT_PARENT=$(lsblk -no PKNAME "$ROOT_SOURCE" | head -n 1 || true)
+            if [ -n "$ROOT_PARENT" ]; then
+              ROOT_DISK="/dev/$ROOT_PARENT"
+            else
+              ROOT_DISK="$ROOT_SOURCE"
+            fi
+            DATA_DISK=$(lsblk -dnpo NAME,TYPE | awk '$2 == "disk" {print $1}' | grep -vx "$ROOT_DISK" | head -n 1 || true)
+            if [ -z "$DATA_DISK" ]; then
+              echo "未找到系统盘之外的数据盘，停止部署以避免数据写入系统盘。"
+              exit 1
+            fi
+
+            # 已有分区时使用首个分区；全新裸盘直接格式化为 ext4。
+            DATA_DEVICE=$(lsblk -nrpo NAME,TYPE "$DATA_DISK" | awk '$2 == "part" {print $1; exit}')
+            if [ -z "$DATA_DEVICE" ]; then
+              DATA_DEVICE="$DATA_DISK"
+            fi
+            FILESYSTEM=$(blkid -s TYPE -o value "$DATA_DEVICE" 2>/dev/null || true)
+            if [ -z "$FILESYSTEM" ]; then
+              mkfs.ext4 -F "$DATA_DEVICE"
+              FILESYSTEM=ext4
+            fi
+
+            mkdir -p "$DATA_DIR"
+            UUID=$(blkid -s UUID -o value "$DATA_DEVICE")
+            if ! mountpoint -q "$DATA_DIR"; then
+              grep -q "UUID=$UUID" /etc/fstab || echo "UUID=$UUID $DATA_DIR $FILESYSTEM defaults,nofail 0 2" >> /etc/fstab
+              mount "$DATA_DIR"
+            fi
+            if [ "$(findmnt -n -o UUID "$DATA_DIR")" != "$UUID" ]; then
+              echo "$DATA_DIR 未挂载到目标数据盘，停止部署。"
+              exit 1
+            fi
+
+            # 将镜像中可能存在的历史目录迁移至数据盘。
+            for directory in data logs config; do
+              mkdir -p "$DATA_DIR/neo4j/$directory"
+              cp -a "/root/neo4j/$directory/." "$DATA_DIR/neo4j/$directory/" 2>/dev/null || true
+            done
+            mkdir -p "$DATA_DIR/neo4j/plugins"
+            cp -a /root/neo4j/plugin/. "$DATA_DIR/neo4j/plugins/" 2>/dev/null || true
+
+            # 按实例实际内存计算：堆使用一半且不超过 31 GiB，页缓存使用剩余内存的 60%。
+            MEM_MB=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)
+            HEAP_MB=$((MEM_MB / 2))
+            if [ "$HEAP_MB" -gt 31744 ]; then HEAP_MB=31744; fi
+            if [ "$HEAP_MB" -lt 512 ]; then HEAP_MB=512; fi
+            PAGECACHE_MB=$(((MEM_MB - HEAP_MB) * 60 / 100))
+            if [ "$PAGECACHE_MB" -lt 512 ]; then PAGECACHE_MB=512; fi
+
+            cat > ./docker-compose.yml <<COMPOSE
+            services:
+              neo4j:
+                image: neo4j:latest
+                volumes:
+                  - $DATA_DIR/neo4j/logs:/logs
+                  - $DATA_DIR/neo4j/config:/config
+                  - $DATA_DIR/neo4j/data:/data
+                  - $DATA_DIR/neo4j/plugins:/plugins
+                environment:
+                  - NEO4J_AUTH_FILE=/run/secrets/neo4j_auth_file
+                  - NEO4J_server_memory_heap_initial__size=${!HEAP_MB}m
+                  - NEO4J_server_memory_heap_max__size=${!HEAP_MB}m
+                  - NEO4J_server_memory_pagecache_size=${!PAGECACHE_MB}m
+                ports:
+                  - "7474:7474"
+                  - "7687:7687"
+                restart: unless-stopped
+                secrets:
+                  - neo4j_auth_file
+            secrets:
+              neo4j_auth_file:
+                file: ./neo4j_auth.txt
+            COMPOSE
+
+            cat > ./neo4j_auth.txt <<'EOF'
+            neo4j/${Neo4jPassword}
             EOF
             docker compose up -d
 
+            # 只有 Neo4j HTTP 服务真正就绪后才完成部署。
+            for attempt in $(seq 1 60); do
+              if curl -fsS http://127.0.0.1:7474 >/dev/null; then
+                echo "Neo4j 已就绪，数据目录：$DATA_DIR/neo4j/data，heap=${!HEAP_MB}m，pagecache=${!PAGECACHE_MB}m。"
+                exit 0
+              fi
+              sleep 5
+            done
+            docker compose logs --tail=200
+            exit 1
           - Neo4jPassword:
               Ref: Neo4jPassword
-            Neo4jUserName:
-              Ref: Neo4jUserName
 
 Outputs:
   # 将内网ip做为http返回的地址显示在控制台
@@ -364,6 +473,7 @@ Outputs:
                  - PrivateIps
   # 将公网ip做为http返回的地址显示在控制台
   PublicEndpoint:
+    Condition: IfAllocatePublicIP
     Description:
       zh-cn: 公网IP地址
       en: Public IP Addresses
@@ -376,6 +486,16 @@ Outputs:
               - Fn::GetAtt:
                   - InstanceGroup
                   - PublicIps
+  Neo4jUserName:
+    Description:
+      zh-cn: Neo4j用户名
+      en: Neo4j User Name
+    Value: neo4j
+  DataPath:
+    Description:
+      zh-cn: Neo4j数据目录
+      en: Neo4j Data Path
+    Value: /data/neo4j/data
 Metadata:
   ALIYUN::ROS::Interface:
     ParameterGroups:
@@ -386,6 +506,7 @@ Metadata:
         Label:
           default: 付费类型配置
       - Parameters:
+          - AllocatePublicIP
           - EcsInstanceType
           - InstancePassword
           - SystemDiskSize
@@ -393,7 +514,6 @@ Metadata:
         Label:
           default: 资源配置
       - Parameters:
-          - Neo4jUserName
           - Neo4jPassword
         Label:
           default: Neo4j配置
