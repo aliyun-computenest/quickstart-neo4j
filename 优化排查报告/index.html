@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="description" content="计算巢是阿里云开放给企业应用服务商的服务管理平台。服务商能够在计算巢上发布私有化部署服务，为其客户提供云上软件一键部署的能力；同时也支持全托管模式的服务，赋能服务商托管其客户资源。">
+  <title>Neo4j 服务优化指南：数据盘与内存配置 - Aliyun 计算巢 x Demo</title>
+
+  <link rel="shortcut icon" href="../img/favicon.ico">
+
+  <link rel="stylesheet" href="https://unpkg.com/purecss@1.0.0/build/pure-min.css">
+  <link rel="stylesheet" href="../css/theme.css">
+  
+
+  
+
+  
+  
+
+  
+    <script src="../search/main.js"></script>
+  
+
+  
+
+  <script src="../js/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+</head>
+
+<body>
+  <div class="container">
+    <div class="nav">
+      <div class="nav-inner">
+        <div class="logo">
+          <img src="./img/logo-2x.png">
+        </div>
+        <div class="nav-list">
+          <ul>
+          
+              <li><a href="#neo4j">Neo4j 服务优化指南：数据盘与内存配置</a></li>
+              
+                  <li><a href="#_1">问题一：数据盘没用上，如何让数据落到数据盘</a></li>
+                  
+                      <li class="li-h3"><a href="#_2">原因</a></li>
+                  
+                      <li class="li-h3"><a href="#_3">解决步骤</a></li>
+                  
+              
+                  <li><a href="#neo4j_1">问题二：如何按机器规格优化 Neo4j 内存</a></li>
+                  
+                      <li class="li-h3"><a href="#_4">原因</a></li>
+                  
+                      <li class="li-h3"><a href="#_5">推荐配置值</a></li>
+                  
+                      <li class="li-h3"><a href="#_6">解决步骤</a></li>
+                  
+              
+                  <li><a href="#_7">一次性完成（可选）</a></li>
+                  
+              
+          
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="content theme-github">
+      
+      <div class="content-inner">        
+        
+        <h1 id="neo4j">Neo4j 服务优化指南：数据盘与内存配置</h1>
+<p>本文面向已部署 Neo4j 实例的用户，说明如何解决两个常见问题：
+1. 挂载了数据盘，但 Neo4j 数据没有写入数据盘；
+2. 大规格实例（如 16 核 64G）下，Neo4j 内存未针对机器做优化。</p>
+<blockquote>
+<p>说明：以下操作均在实例的 ECS 上执行。请先通过服务实例详情页拿到公网/内网 IP，用实例密码 SSH 登录：<code>ssh root@&lt;实例IP&gt;</code>。操作前建议先对数据做备份。</p>
+<p>验证情况：修复后的服务已使用 <code>ecs.u1-c1m4.4xlarge</code>（16 核 64 GiB）实例完成真实部署测试。ROS 栈和安装命令均执行成功；安装命令会校验数据盘已按 UUID 挂载到 <code>/data</code>，并在 Neo4j HTTP 服务就绪后才返回成功。内存环境变量也已通过真实 <code>neo4j:latest</code> 容器验证，31 GiB 堆能够被 JVM 正确读取和申请。</p>
+</blockquote>
+<hr />
+<h2 id="_1">问题一：数据盘没用上，如何让数据落到数据盘</h2>
+<h3 id="_2">原因</h3>
+<p>实例虽然挂载了数据盘，但系统没有自动格式化和挂载它，同时 Neo4j 的数据目录默认指向系统盘（<code>/root/neo4j/data</code>）。因此数据盘一直空置，数据都写在 40G 系统盘上。</p>
+<h3 id="_3">解决步骤</h3>
+<ol>
+<li>登录实例后，查看磁盘，确认数据盘设备名（系统盘一般是 <code>vda</code>，数据盘通常是 <code>vdb</code>）：</li>
+</ol>
+<p><code>bash
+   lsblk</code></p>
+<ol>
+<li>格式化数据盘并挂载到 <code>/data</code>，并写入 <code>/etc/fstab</code> 实现开机自动挂载（下面以 <code>/dev/vdb</code> 为例，请按上一步实际结果替换）：</li>
+</ol>
+<p><code>bash
+   mkfs.ext4 /dev/vdb
+   mkdir -p /data
+   UUID=$(blkid -s UUID -o value /dev/vdb)
+   echo "UUID=$UUID /data ext4 defaults,nofail 0 2" &gt;&gt; /etc/fstab
+   mount -a
+   df -h /data          # 确认 /data 已挂到数据盘</code></p>
+<ol>
+<li>把 Neo4j 数据迁移到数据盘，并修改 <code>docker-compose.yml</code> 让数据卷指向 <code>/data</code>：</li>
+</ol>
+<p>```bash
+   cd /usr/local/applications/
+   docker compose down                       # 停止服务</p>
+<p>mkdir -p /data/neo4j/{data,logs,plugins,config}
+   # 如系统盘已有数据，迁移过去（无历史数据可跳过）
+   cp -a /root/neo4j/data/. /data/neo4j/data/ 2&gt;/dev/null || true
+   ```</p>
+<p>编辑 <code>docker-compose.yml</code>，把 <code>volumes</code> 改成指向 <code>/data</code>：</p>
+<p><code>yaml
+       volumes:
+         - /data/neo4j/logs:/logs
+         - /data/neo4j/config:/config
+         - /data/neo4j/data:/data
+         - /data/neo4j/plugins:/plugins</code></p>
+<ol>
+<li>重启服务并验证数据盘已被使用：</li>
+</ol>
+<p><code>bash
+   docker compose up -d
+   du -sh /data/neo4j/data     # 数据盘上应能看到数据增长</code></p>
+<hr />
+<h2 id="neo4j_1">问题二：如何按机器规格优化 Neo4j 内存</h2>
+<h3 id="_4">原因</h3>
+<p>默认部署没有配置 Neo4j 的堆内存（heap）和页缓存（pagecache），Neo4j 只能走内置默认值：堆最大约为物理内存的 25%（64G 机器约 16G），页缓存也偏小。大规格机器的内存被严重浪费。</p>
+<h3 id="_5">推荐配置值</h3>
+<p>按机器内存计算（贴合 <code>neo4j-admin server memory-recommendation</code>）：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>计算规则</th>
+<th>16 核 64G 推荐值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>堆内存 <code>heap</code>（initial 与 max 设成一致）</td>
+<td><code>min(31G, 内存/2)</code>（上限 31G，保留 JVM 指针压缩优势）</td>
+<td><strong>31g</strong></td>
+</tr>
+<tr>
+<td>页缓存 <code>pagecache</code></td>
+<td><code>(内存 - 堆) × 60%</code></td>
+<td><strong>19g</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_6">解决步骤</h3>
+<p>编辑 <code>/usr/local/applications/docker-compose.yml</code>，在 <code>environment</code> 下增加三行（以 16C64G 为例）：</p>
+<pre><code class="language-yaml">    environment:
+      - NEO4J_AUTH_FILE=/run/secrets/neo4j_auth_file
+      - NEO4J_server_memory_heap_initial__size=31g
+      - NEO4J_server_memory_heap_max__size=31g
+      - NEO4J_server_memory_pagecache_size=19g
+</code></pre>
+<p>保存后重启并确认参数生效：</p>
+<pre><code class="language-bash">cd /usr/local/applications/
+docker compose up -d
+docker exec -it $(docker compose ps -q neo4j) \
+  bash -c &quot;cat /var/lib/neo4j/conf/neo4j.conf | grep memory&quot; 2&gt;/dev/null || true
+</code></pre>
+<blockquote>
+<p>其它规格实例请按上表规则换算，例如 8 核 32G 建议 heap 约 16g、pagecache 约 9g。</p>
+</blockquote>
+<hr />
+<h2 id="_7">一次性完成（可选）</h2>
+<p>若希望上述两步一起处理，可在实例上直接执行下面脚本（自动挂盘 + 按内存计算参数 + 重写并重启）：</p>
+<pre><code class="language-bash">#!/bin/bash
+set -e
+cd /usr/local/applications/
+
+# 1) 挂载数据盘
+DATA_DIR=/data
+DATA_DISK=&quot;&quot;
+for dev in /dev/vdb /dev/vdc /dev/nvme1n1; do
+  if [ -b &quot;$dev&quot; ] &amp;&amp; [ -z &quot;$(lsblk -no MOUNTPOINT $dev)&quot; ]; then DATA_DISK=&quot;$dev&quot;; break; fi
+done
+if [ -n &quot;$DATA_DISK&quot; ]; then
+  blkid &quot;$DATA_DISK&quot; &gt;/dev/null 2&gt;&amp;1 || mkfs.ext4 -F &quot;$DATA_DISK&quot;
+  mkdir -p &quot;$DATA_DIR&quot;
+  UUID=&quot;$(blkid -s UUID -o value $DATA_DISK)&quot;
+  grep -q &quot;$UUID&quot; /etc/fstab || echo &quot;UUID=$UUID $DATA_DIR ext4 defaults,nofail 0 2&quot; &gt;&gt; /etc/fstab
+  mount -a
+fi
+mkdir -p $DATA_DIR/neo4j/data $DATA_DIR/neo4j/logs $DATA_DIR/neo4j/plugins $DATA_DIR/neo4j/config
+cp -a /root/neo4j/data/. $DATA_DIR/neo4j/data/ 2&gt;/dev/null || true
+
+# 2) 按内存计算堆与页缓存
+MEM_GB=$(awk '/MemTotal/{printf &quot;%d&quot;, $2/1024/1024}' /proc/meminfo)
+HEAP=$((MEM_GB/2)); [ $HEAP -gt 31 ] &amp;&amp; HEAP=31; [ $HEAP -lt 1 ] &amp;&amp; HEAP=1
+PAGECACHE=$(( (MEM_GB-HEAP)*3/5 )); [ $PAGECACHE -lt 1 ] &amp;&amp; PAGECACHE=1
+
+# 3) 重写 docker-compose 并重启
+docker compose down || true
+cat &gt; ./docker-compose.yml &lt;&lt;COMPOSE
+services:
+  neo4j:
+    image: neo4j:latest
+    volumes:
+      - $DATA_DIR/neo4j/logs:/logs
+      - $DATA_DIR/neo4j/config:/config
+      - $DATA_DIR/neo4j/data:/data
+      - $DATA_DIR/neo4j/plugins:/plugins
+    environment:
+      - NEO4J_AUTH_FILE=/run/secrets/neo4j_auth_file
+      - NEO4J_server_memory_heap_initial__size=${HEAP}g
+      - NEO4J_server_memory_heap_max__size=${HEAP}g
+      - NEO4J_server_memory_pagecache_size=${PAGECACHE}g
+    ports:
+      - &quot;7474:7474&quot;
+      - &quot;7687:7687&quot;
+    restart: always
+    secrets:
+      - neo4j_auth_file
+secrets:
+  neo4j_auth_file:
+    file: ./neo4j_auth.txt
+COMPOSE
+docker compose up -d
+echo &quot;完成：数据盘挂载到 $DATA_DIR，heap=${HEAP}g pagecache=${PAGECACHE}g&quot;
+</code></pre>
+        
+      </div>
+
+      <div class="copyrights">© 2009-2022 Aliyun.com 版权所有</div>
+    </div>
+  </div>
+  
+  <!--
+  MkDocs version      : 1.6.1
+  Docs Build Date UTC : 2026-10-20 06:06:31.282739+00:00
+  -->
+</body>
+</html>
